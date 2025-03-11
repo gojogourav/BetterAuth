@@ -10,9 +10,14 @@
   },
   "dependencies": {
     "@prisma/client": "^6.4.1",
+    "bcrypt": "^5.1.1",
+    "bcryptjs": "^3.0.2",
+    "jose": "^6.0.8",
     "next": "15.2.1",
+    "rate-limiter-flexible": "^5.0.5",
     "react": "^19.0.0",
-    "react-dom": "^19.0.0"
+    "react-dom": "^19.0.0",
+    "resend": "^4.1.2"
   },
   "devDependencies": {
     "@tailwindcss/postcss": "^4",
