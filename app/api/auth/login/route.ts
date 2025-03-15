@@ -46,9 +46,11 @@ export async function POST(request: NextRequest, res: NextApiResponse) {
         if (!user) {
             return res.status(404).json({ error: "Invalid credentials" })
         }
-        const Suspecius = !user?.loginAttempt.some(attempt =>
-            attempt.ipAddress === ip && attempt.success
-        )
+        let Suspecius = true;
+
+        for (let i = 0; i < 10; i++) {
+            if (user.loginAttempt[i].success !== false) Suspecius = false
+        }
         const passwordValid = await bcrypt.compare(password, user?.passwordHash || "")
 
         if (!passwordValid) {
@@ -68,6 +70,8 @@ export async function POST(request: NextRequest, res: NextApiResponse) {
                     verifiedUser: false
                 }
             })
+
+            return res.status(500).json({error:"Unauthorized Access"})
 
         }
 
@@ -126,7 +130,7 @@ export async function POST(request: NextRequest, res: NextApiResponse) {
             const otp = crypto.randomInt(100000, 999999).toString();
             const otpHashed = await bcrypt.hash(otp, 12)
             const verificationId = crypto.randomUUID();
-            const loginattempt= await prisma.loginAttempt.create({
+            const loginattempt = await prisma.loginAttempt.create({
                 data: {
                     user: { connect: { id: user?.id } },
                     ipAddress: ip,
