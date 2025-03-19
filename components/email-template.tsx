@@ -1,7 +1,7 @@
 import * as React from 'react';
 
 interface EmailTemplateProps {
-  otp: number;
+  otp: string;
 }
 
 export const EmailTemplate: React.FC<Readonly<EmailTemplateProps>> = ({

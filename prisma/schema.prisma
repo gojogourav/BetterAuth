@@ -21,8 +21,6 @@ model User {
   emailVerified Boolean @default(false)
 
   emailVerificationExpires DateTime
-  loginAttempt             LoginAttempt[]
-  sessions                 Session[]
   failedAttempts           Int            @default(0)
   lockedUntil              DateTime?
 
@@ -40,26 +38,7 @@ model User {
   //iske bad chatting feature dalenga
 }
 
-model Session {
-  id                    String   @id @default(uuid())
-  user                  User     @relation(fields: [userId], references: [id])
-  userId                String
-  ipAddress             String
-  refreshToken          String   @unique
-  refreshTokenExpiry    DateTime @unique
-  accessTokenExpiry     DateTime @unique
-  createdAt             DateTime @default(now())
-}
 
-model LoginAttempt {
-  id                    String   @id @default(uuid())
-  user                  User     @relation(fields: [userId], references: [id])
-  userId                String
-  ipAddress             String
-  success               Boolean  @default(false)
-  createdAt             DateTime @default(now())
-  emailVerificationCode String?
-}
 
 model UploadedReel {
   user        User       @relation(fields: [userId], references: [id])

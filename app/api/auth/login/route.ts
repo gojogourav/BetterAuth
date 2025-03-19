@@ -2,18 +2,25 @@ import { PrismaClient } from "@prisma/client";
 import bcrypt from "bcryptjs";
 import { NextRequest, NextResponse } from "next/server"
 import * as jose from 'jose'
-import { RateLimiterMemory } from "rate-limiter-flexible";
-import { NextApiRequest, NextApiResponse } from "next";
+import { RateLimiterRedis } from "rate-limiter-flexible";
+import { NextApiResponse } from "next";
 import * as crypto from 'crypto'
 import { Resend } from "resend";
 import { EmailTemplate } from "@/components/email-template";
+import { redis } from "@/lib/redis";
+
+
 
 
 const prisma = new PrismaClient()
-const ratelimiter = new RateLimiterMemory({
+
+//TODO:this is the rate limiter reddis
+
+const ratelimiter = new RateLimiterRedis({
     points: 5,
     duration: 60,
-    blockDuration: 300
+    blockDuration: 300,
+    storeClient: redis
 })
 
 const resend = new Resend(process.env.RESEND_API_KEY);
@@ -22,6 +29,7 @@ const resend = new Resend(process.env.RESEND_API_KEY);
 export async function POST(request: NextRequest, res: NextApiResponse) {
     const forwardedHeader = request.headers.get("x-forwarded-for") || "";
     const ip = forwardedHeader.split(',')[0] || "unknown";
+    //this is how u get ip address
 
     try {
         await ratelimiter.consume(ip);
@@ -30,28 +38,48 @@ export async function POST(request: NextRequest, res: NextApiResponse) {
     }
 
     try {
-
         const { username, password } = await request.json();
-        const user = await prisma.user.findFirst({
-            where: {
-                username
-            },
-            include: {
-                sessions: true,
-                loginAttempt: true
-            }
-        })
 
+        const userCache = await redis.get(`user:${username}`)
+        //redis chache check hoga
+        let user = userCache ? JSON.parse(userCache) : null;
 
         if (!user) {
-            return res.status(404).json({ error: "Invalid credentials" })
+            user = await prisma.user.findFirst({
+                where: {
+                    username
+                },
+                include: {
+                    loginAttempt: {
+                        orderBy: { createdAt: 'desc' },
+                        take: 10
+                    }
+                }
+            })
         }
-        let Suspecius = true;
 
-        for (let i = 0; i < 10; i++) {
-            if (user.loginAttempt[i].success !== false) Suspecius = false
+
+        if (user) {
+            return redis.setEx(`user:${username}`, 300, JSON.stringify(user))
         }
-        const passwordValid = await bcrypt.compare(password, user?.passwordHash || "")
+
+        if (!user) {
+            return NextResponse.json({ error: "Invalid credentials" }, { status: 401 })
+        }
+
+        const lockedUntil = await redis.get(`lock:${user.id}`)
+        if (Date.now() <= parseInt(lockedUntil!.toString())) {
+            return NextResponse.json(
+                { error: "Account temporarily locked" },
+                { status: 403 }
+            );
+        }
+
+
+        const loginAttempts = await redis.lRange(`attempts:${user.id}`, 0, 9)
+        const Suspecius = loginAttempts.every(attempt => JSON.parse(attempt).success === false)
+
+        const passwordValid = await bcrypt.compare(password, user?.passwordHash)
 
         if (!passwordValid) {
             await prisma.user.update({
@@ -62,83 +90,37 @@ export async function POST(request: NextRequest, res: NextApiResponse) {
                 }
             })
 
-            await prisma.loginAttempt.create({
-                data: {
-                    user: { connect: { id: user?.id } },
-                    ipAddress: ip,
-                    success: false,
-                    verifiedUser: false
-                }
-            })
+            const loginAttempt = {
+                userId: user?.id,
+                ipAddress: ip,
+                success: false,
+                verifiedUser: false
+            }
 
-            return res.status(500).json({error:"Unauthorized Access"})
+            await redis.lPush(`attempts:${user.id}`, JSON.stringify(loginAttempt))
+            await redis.lTrim(`attempts:${user.id}`, 0, 9)
+            const failedAttempts = await redis.incr(`failed_attempts:${user.id}`);
+
+
+            if (failedAttempts >= 5) {
+                await redis.setEx(`lock:${user.id}`, 900,String( Date.now() + 900000));
+                await redis.del(`failed_attempts:${user.id}`);
+            }
+
+            return res.status(500).json({ error: "Unauthorized Access" })
 
         }
 
-        if (!Suspecius) {
-            const newLoginAttempt = await prisma.loginAttempt.create({
-                data: {
-                    user: { connect: { id: user?.id } },
-                    ipAddress: ip,
-                    success: true,
-                    verifiedUser: true
-                }
-            }
-            )
-            const date = new Date()
-
-            const refreshToken = crypto.randomBytes(64).toString('hex');
-            const refreshTokenHash = await bcrypt.hash(refreshToken, 12);
-
-
-            const secret = new TextEncoder().encode(process.env.JWT_SECRET)
-            const accessToken = await new jose.SignJWT({ userId: user?.id, role: "user" })
-                .setProtectedHeader({ alg: 'HS256' })
-                .setExpirationTime('15m')
-                .sign(secret)
-
-
-            const refreshTokenExpiry = date.setMonth(date.getMonth() + 1)
-            const newSession = await prisma.session.create({
-                data: {
-                    user: { connect: { id: user?.id } },
-                    ipAddress: ip,
-                    refreshToken: refreshTokenHash,
-                    refreshTokenExpiry: new Date(Date.now() + 7 * 24 * 60 * 60 * 1000),
-                    accessTokenExpiry: new Date(Date.now() + 15 * 60 * 1000),
-                }
-            })
-
-
-            const response = NextResponse.json({ success: true });
-            response.cookies.set('access_token', accessToken, {
-                sameSite: 'strict',
-                httpOnly: true,
-                secure: process.env.NODE_ENV === 'production',
-                maxAge: 60 * 15
-            });
-            response.cookies.set('refresh_token', refreshToken, {
-                sameSite: 'strict',
-                httpOnly: true,
-                secure: process.env.NODE_ENV === 'production',
-                maxAge: 15 * 60 * 60 * 24
-            })
-
-            return res.status(200).json({ success: true })
-
-        } else {
+        if (Suspecius) {
             const otp = crypto.randomInt(100000, 999999).toString();
-            const otpHashed = await bcrypt.hash(otp, 12)
             const verificationId = crypto.randomUUID();
-            const loginattempt = await prisma.loginAttempt.create({
-                data: {
-                    user: { connect: { id: user?.id } },
-                    ipAddress: ip,
-                    success: false,
-                    verifiedUser: false,
-                    emailVerificationCode: otpHashed
-                }
-            })
+
+            await redis.setEx(`otp:${verificationId}`, 900, JSON.stringify({
+                userId: user.id,
+                otpHash: await bcrypt.hash(otp, 12),
+                ipAddress: ip
+            }));
+
 
             //idhar email verification code send hoyego
             // github work ni krrra
@@ -153,10 +135,50 @@ export async function POST(request: NextRequest, res: NextApiResponse) {
             if (error) {
                 return res.status(500).json({ error })
             }
-            return res.status(200).json({ verificationLink: `${loginattempt.id}/${verificationId}/${otpHashed}` })
 
+
+            return res.status(200).json({ VerificationRequired: true, verificationId })
 
         }
+
+        const secret = new TextEncoder().encode(process.env.JWT_SECRET);
+        const access_token = await new jose.SignJWT({
+            userId: user.id,
+        })
+            .setProtectedHeader({ alg: "HS256" })
+            .setExpirationTime('15m')
+            .sign(secret);
+
+
+
+        const refresh_token = crypto.randomBytes(64).toString('hex')
+        const refresh_token_hash = await bcrypt.hash(refresh_token, 12)
+
+        await redis.setEx(`session:${user.id}`, 604800, JSON.stringify({ // 7 days
+            refresh_token_hash,
+            ipAddress: ip,
+            lastAccessed: Date.now()
+        }));
+
+        const response = NextResponse.json({ susscess: true });
+        response.cookies.set('access_token', access_token, {
+            httpOnly: true,
+            secure: process.env.NODE_ENV === 'production',
+            maxAge: 15 * 60,
+            sameSite: 'strict'
+        })
+        response.cookies.set('refresh_token', access_token, {
+            httpOnly: true,
+            secure: process.env.NODE_ENV === 'production',
+            maxAge: 15 * 24 * 60 * 60,
+            sameSite: 'strict'
+        })
+        await redis.del(`failed_attempts:${user.id}`);
+        await redis.del(`lock:${user.id}`);
+        await redis.del(`user:${username}`); // Invalidate cache
+
+
+        return response;
 
     } catch (error) {
         console.error(error);
