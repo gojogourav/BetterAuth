@@ -49,12 +49,6 @@ export async function POST(request: NextRequest, res: NextApiResponse) {
                 where: {
                     username
                 },
-                include: {
-                    loginAttempt: {
-                        orderBy: { createdAt: 'desc' },
-                        take: 10
-                    }
-                }
             })
         }
 

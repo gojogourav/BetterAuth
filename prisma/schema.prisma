@@ -19,8 +19,8 @@ model User {
   passwordHash  String
   email         String  @unique
   emailVerified Boolean @default(false)
+  name String?
 
-  emailVerificationExpires DateTime
   failedAttempts           Int            @default(0)
   lockedUntil              DateTime?
 
