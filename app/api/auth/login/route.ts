@@ -67,7 +67,7 @@ export async function POST(request: NextRequest) {
 
         if (!user) {
             return NextResponse.json({ error: "Invalid credentials" }, { status: 401 })
-        }else redis.setEx(`user:${user.userId}`, 300, JSON.stringify(user))
+        }else redis.setEx(`user:${username}`, 300, JSON.stringify(user))
 
 
         const lockedUntil = await redis.get(`lock:${user.id}`)
@@ -85,14 +85,6 @@ export async function POST(request: NextRequest) {
         const passwordValid = await bcrypt.compare(password, user?.passwordHash)
 
         if (!passwordValid) {
-            await prisma.user.update({
-                where: { id: user?.id },
-                data: {
-                    failedAttempts: { increment: 1 },
-                    lockedUntil: user?.failedAttempts! >= 4 ? new Date(Date.now() + 15 * 60 * 1000) : null
-                }
-            })
-
             const loginAttempt = {
                 userId: user?.id,
                 ipAddress: ip,
@@ -102,8 +94,13 @@ export async function POST(request: NextRequest) {
 
             await redis.lPush(`attempts:${user.id}`, JSON.stringify(loginAttempt))
             await redis.lTrim(`attempts:${user.id}`, 0, 9)
-            const failedAttempts = await redis.incr(`failed_attempts:${user.id}`);
+            const failedAttempts = await redis
+            .multi()
+            .incr(`failed_attempts:${user.id}`)
+            .expire(`failed_attempts:${user.id}`, 3600, 'NX')
+            .exec();
 
+            if(!failedAttempts) 
 
             if (failedAttempts >= 5) {
                 await redis.setEx(`lock:${user.id}`, 900,String( Date.now() + 900000));
@@ -118,7 +115,7 @@ export async function POST(request: NextRequest) {
             const otp = crypto.randomInt(100000, 999999).toString();
             const verificationId = crypto.randomUUID();
 
-            const otpCount = await redis.keys(`otp:*:${user.id}`);
+            const otpCount = await redis.keys(`otp:${verificationId}`);
             if(otpCount.length>=5){
                 await redis.setEx(`lock:${user.id}`, 900,String( Date.now() + 900000));
             } 
@@ -136,6 +133,7 @@ export async function POST(request: NextRequest) {
                 subject: 'Hello world',
                 react: await EmailTemplate({ otp: otp.toString() }),
             });
+
 
             if (error) {
                 return NextResponse.json({ error:"Error logging inn" },{status:500})
@@ -156,11 +154,13 @@ export async function POST(request: NextRequest) {
 
 
 
-        const refresh_token = crypto.randomBytes(64).toString('hex')
-        const refresh_token_hash = await bcrypt.hash(refresh_token, 12)
-
+        const refresh_token =await new jose.SignJWT({userId:user.id})
+        .setProtectedHeader({ alg: "HS256" })
+        .setExpirationTime('15m')
+        .sign(secret);
+        
         await redis.setEx(`session:${user.id}`, 604800, JSON.stringify({ // 7 days
-            refresh_token_hash,
+            refresh_token,
             ipAddress: ip,
             lastAccessed: Date.now()
         }));
@@ -172,7 +172,7 @@ export async function POST(request: NextRequest) {
             maxAge: 15 * 60,
             sameSite: 'strict'
         })
-        response.cookies.set('refresh_token', access_token, {
+        response.cookies.set('refresh_token', refresh_token, {
             httpOnly: true,
             secure: process.env.NODE_ENV === 'production',
             maxAge: 15 * 24 * 60 * 60,
