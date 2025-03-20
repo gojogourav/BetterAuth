@@ -9,7 +9,7 @@ import { Resend } from "resend";
 import { EmailTemplate } from "@/components/email-template";
 import { redis } from "@/lib/redis";
 
-
+import * as z from 'zod'
 
 
 const prisma = new PrismaClient()
@@ -25,8 +25,16 @@ const ratelimiter = new RateLimiterRedis({
 
 const resend = new Resend(process.env.RESEND_API_KEY);
 
+const bodySchema = z.object({
+        username: z.string()
+            .min(3, "Username must be at least 3 characters")
+            .max(20, "Username cannot exceed 20 characters"),
+        password: z.string()
+            .min(6, "Password must be at least 6 characters")
+})
 
-export async function POST(request: NextRequest, res: NextApiResponse) {
+
+export async function POST(request: NextRequest) {
     const forwardedHeader = request.headers.get("x-forwarded-for") || "";
     const ip = forwardedHeader.split(',')[0] || "unknown";
     //this is how u get ip address
@@ -34,11 +42,14 @@ export async function POST(request: NextRequest, res: NextApiResponse) {
     try {
         await ratelimiter.consume(ip);
     } catch (error) {
-        return res.status(429).json({ error: "Error too many requests" })
+        return NextResponse.json({ error: "Error too many requests" },{status:429})
     }
 
     try {
-        const { username, password } = await request.json();
+        const body = await request.json();
+        const validation = bodySchema.safeParse(body)
+        if(!validation.success) return NextResponse.json({error:"enter full details"})
+        const {username,password} = validation.data
 
         const userCache = await redis.get(`user:${username}`)
         //redis chache check hoga
@@ -53,16 +64,14 @@ export async function POST(request: NextRequest, res: NextApiResponse) {
         }
 
 
-        if (user) {
-            return redis.setEx(`user:${username}`, 300, JSON.stringify(user))
-        }
 
         if (!user) {
             return NextResponse.json({ error: "Invalid credentials" }, { status: 401 })
-        }
+        }else redis.setEx(`user:${user.userId}`, 300, JSON.stringify(user))
+
 
         const lockedUntil = await redis.get(`lock:${user.id}`)
-        if (Date.now() <= parseInt(lockedUntil!.toString())) {
+        if (Date.now() <= parseInt(lockedUntil!)) {
             return NextResponse.json(
                 { error: "Account temporarily locked" },
                 { status: 403 }
@@ -101,7 +110,7 @@ export async function POST(request: NextRequest, res: NextApiResponse) {
                 await redis.del(`failed_attempts:${user.id}`);
             }
 
-            return res.status(500).json({ error: "Unauthorized Access" })
+            return NextResponse.json({ error: "Unauthorized Access" },{status:500})
 
         }
 
@@ -109,15 +118,17 @@ export async function POST(request: NextRequest, res: NextApiResponse) {
             const otp = crypto.randomInt(100000, 999999).toString();
             const verificationId = crypto.randomUUID();
 
-            await redis.setEx(`otp:${verificationId}`, 900, JSON.stringify({
-                userId: user.id,
-                otpHash: await bcrypt.hash(otp, 12),
-                ipAddress: ip
-            }));
+            const otpCount = await redis.keys(`otp:*:${user.id}`);
+            if(otpCount.length>=5){
+                await redis.setEx(`lock:${user.id}`, 900,String( Date.now() + 900000));
+            } 
 
+            await redis.setEx( `otp:${verificationId}`,900,JSON.stringify({
+                userId:user.id,
+                otpHash:await bcrypt.hash(otp,12),
+                ip:ip,
+            }))
 
-            //idhar email verification code send hoyego
-            // github work ni krrra
 
             const { data, error } = await resend.emails.send({
                 from: 'Acme <onboarding@resend.dev>',
@@ -127,11 +138,11 @@ export async function POST(request: NextRequest, res: NextApiResponse) {
             });
 
             if (error) {
-                return res.status(500).json({ error })
+                return NextResponse.json({ error:"Error logging inn" },{status:500})
             }
 
 
-            return res.status(200).json({ VerificationRequired: true, verificationId })
+            return NextResponse.json({ VerificationRequired: true, verificationId },{status:200})
 
         }
 
@@ -175,9 +186,7 @@ export async function POST(request: NextRequest, res: NextApiResponse) {
         return response;
 
     } catch (error) {
-        console.error(error);
+        console.error("Error in server",error);
         return NextResponse.json({ error: "An unexpected error occurred" }, { status: 500 });
-    } finally {
-        await prisma.$disconnect();
     }
 }
