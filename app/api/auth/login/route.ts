@@ -3,7 +3,6 @@ import bcrypt from "bcryptjs";
 import { NextRequest, NextResponse } from "next/server"
 import * as jose from 'jose'
 import { RateLimiterRedis } from "rate-limiter-flexible";
-import { NextApiResponse } from "next";
 import * as crypto from 'crypto'
 import { Resend } from "resend";
 import { EmailTemplate } from "@/components/email-template";
@@ -136,6 +135,8 @@ export async function POST(request: NextRequest) {
 
 
             if (error) {
+                console.error(error);
+                
                 return NextResponse.json({ error:"Error logging inn" },{status:500})
             }
 
