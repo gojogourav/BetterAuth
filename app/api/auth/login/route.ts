@@ -18,7 +18,7 @@ const prisma = new PrismaClient()
 const ratelimiter = new RateLimiterRedis({
     points: 5,
     duration: 60,
-    blockDuration: 300,
+    blockDuration: 10,
     storeClient: redis
 })
 
@@ -33,14 +33,26 @@ const bodySchema = z.object({
 })
 
 
+if(!redis.isReady){
+    await redis.connect();
+}
 export async function POST(request: NextRequest) {
     const forwardedHeader = request.headers.get("x-forwarded-for") || "";
     const ip = forwardedHeader.split(',')[0] || "unknown";
+    console.log('This is the ip - ',ip);
+    
     //this is how u get ip address
 
     try {
+        // await redis.connect();
+        await redis.set('gourav:1','burger');
+        // const value = await redis.get('gourav:1');
+        // console.log(value);
+        
         await ratelimiter.consume(ip);
     } catch (error) {
+        console.error(error);
+        
         return NextResponse.json({ error: "Error too many requests" },{status:429})
     }
 
@@ -128,7 +140,7 @@ export async function POST(request: NextRequest) {
 
             const { data, error } = await resend.emails.send({
                 from: 'Acme <onboarding@resend.dev>',
-                to: [user?.email!],
+                to: [`${user?.email!}`],
                 subject: 'Hello world',
                 react: await EmailTemplate({ otp: otp.toString() }),
             });
@@ -157,7 +169,7 @@ export async function POST(request: NextRequest) {
 
         const refresh_token =await new jose.SignJWT({userId:user.id})
         .setProtectedHeader({ alg: "HS256" })
-        .setExpirationTime('15m')
+        .setExpirationTime('15d')
         .sign(secret);
         
         await redis.setEx(`session:${user.id}`, 604800, JSON.stringify({ // 7 days

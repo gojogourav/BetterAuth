@@ -4,6 +4,9 @@ import { NextRequest, NextResponse } from "next/server";
 import * as jose from 'jose'
 import * as crypto from 'crypto'
 
+if(!redis.isReady){
+    await redis.connect();
+}
 export async function POST(request: NextRequest, { params }: { params: { verificationId: string } }) {
     try {
         const { verificationId } = await params;
