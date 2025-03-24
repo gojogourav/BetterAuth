@@ -15,6 +15,13 @@ const prisma = new PrismaClient()
 
 //TODO:this is the rate limiter reddis
 
+const ratelimiterEmail = new RateLimiterRedis({
+    points: 5,
+    duration: 60,
+    blockDuration: 60,
+    storeClient: redis
+})
+
 const ratelimiter = new RateLimiterRedis({
     points: 5,
     duration: 60,
@@ -25,42 +32,42 @@ const ratelimiter = new RateLimiterRedis({
 const resend = new Resend(process.env.RESEND_API_KEY);
 
 const bodySchema = z.object({
-        username: z.string()
-            .min(3, "Username must be at least 3 characters")
-            .max(20, "Username cannot exceed 20 characters"),
-        password: z.string()
-            .min(6, "Password must be at least 6 characters")
+    username: z.string()
+        .min(3, "Username must be at least 3 characters")
+        .max(20, "Username cannot exceed 20 characters"),
+    password: z.string()
+        .min(6, "Password must be at least 6 characters")
 })
 
 
-if(!redis.isReady){
+if (!redis.isReady) {
     await redis.connect();
 }
 export async function POST(request: NextRequest) {
     const forwardedHeader = request.headers.get("x-forwarded-for") || "";
     const ip = forwardedHeader.split(',')[0] || "unknown";
-    console.log('This is the ip - ',ip);
-    
+    console.log('This is the ip - ', ip);
+
     //this is how u get ip address
 
     try {
         // await redis.connect();
-        await redis.set('gourav:1','burger');
+        // await redis.set('gourav:1', 'burger');
         // const value = await redis.get('gourav:1');
         // console.log(value);
-        
+
         await ratelimiter.consume(ip);
     } catch (error) {
         console.error(error);
-        
-        return NextResponse.json({ error: "Error too many requests" },{status:429})
+
+        return NextResponse.json({ error: "Error too many requests" }, { status: 429 })
     }
 
     try {
         const body = await request.json();
         const validation = bodySchema.safeParse(body)
-        if(!validation.success) return NextResponse.json({error:"enter full details"})
-        const {username,password} = validation.data
+        if (!validation.success) return NextResponse.json({ error: "enter full details" })
+        const { username, password } = validation.data
 
         const userCache = await redis.get(`user:${username}`)
         //redis chache check hoga
@@ -78,7 +85,7 @@ export async function POST(request: NextRequest) {
 
         if (!user) {
             return NextResponse.json({ error: "Invalid credentials" }, { status: 401 })
-        }else redis.setEx(`user:${username}`, 300, JSON.stringify(user))
+        } else redis.setEx(`user:${username}`, 300, JSON.stringify(user))
 
 
         const lockedUntil = await redis.get(`lock:${user.id}`)
@@ -106,19 +113,19 @@ export async function POST(request: NextRequest) {
             await redis.lPush(`attempts:${user.id}`, JSON.stringify(loginAttempt))
             await redis.lTrim(`attempts:${user.id}`, 0, 9)
             const failedAttempts = await redis
-            .multi()
-            .incr(`failed_attempts:${user.id}`)
-            .expire(`failed_attempts:${user.id}`, 3600, 'NX')
-            .exec();
+                .multi()
+                .incr(`failed_attempts:${user.id}`)
+                .expire(`failed_attempts:${user.id}`, 3600, 'NX')
+                .exec();
 
-            if(!failedAttempts) 
+            if (!failedAttempts)
 
-            if (failedAttempts >= 5) {
-                await redis.setEx(`lock:${user.id}`, 900,String( Date.now() + 900000));
-                await redis.del(`failed_attempts:${user.id}`);
-            }
+                if (failedAttempts >= 5) {
+                    await redis.setEx(`lock:${user.id}`, 900, String(Date.now() + 900000));
+                    await redis.del(`failed_attempts:${user.id}`);
+                }
 
-            return NextResponse.json({ error: "Unauthorized Access" },{status:500})
+            return NextResponse.json({ error: "Unauthorized Access" }, { status: 500 })
 
         }
 
@@ -127,14 +134,14 @@ export async function POST(request: NextRequest) {
             const verificationId = crypto.randomUUID();
 
             const otpCount = await redis.keys(`otp:${verificationId}`);
-            if(otpCount.length>=5){
-                await redis.setEx(`lock:${user.id}`, 900,String( Date.now() + 900000));
-            } 
+            if (otpCount.length >= 5) {
+                await redis.setEx(`lock:${user.id}`, 900, String(Date.now() + 900000));
+            }
 
-            await redis.setEx( `otp:${verificationId}`,900,JSON.stringify({
-                userId:user.id,
-                otpHash:await bcrypt.hash(otp,12),
-                ip:ip,
+            await redis.setEx(`otp:${verificationId}`, 900, JSON.stringify({
+                userId: user.id,
+                otpHash: await bcrypt.hash(otp, 12),
+                ip: ip,
             }))
 
 
@@ -144,16 +151,22 @@ export async function POST(request: NextRequest) {
                 subject: 'Hello world',
                 react: await EmailTemplate({ otp: otp.toString() }),
             });
+            try {
 
-
+                ratelimiterEmail.consume(ip);
+            } catch (err) {
+                return NextResponse.json({ error: "Too many otp request" }, { status: 403 })
+            }
             if (error) {
                 console.error(error);
-                
-                return NextResponse.json({ error:"Error logging inn" },{status:500})
+
+                return NextResponse.json({ error: "Error logging inn" }, { status: 500 })
             }
+            console.log(verificationId);
 
 
-            return NextResponse.json({ VerificationRequired: true, verificationId },{status:200})
+            return NextResponse.json({ VerificationRequired: true, verificationId }, { status: 200 })
+
 
         }
 
@@ -167,11 +180,11 @@ export async function POST(request: NextRequest) {
 
 
 
-        const refresh_token =await new jose.SignJWT({userId:user.id})
-        .setProtectedHeader({ alg: "HS256" })
-        .setExpirationTime('15d')
-        .sign(secret);
-        
+        const refresh_token = await new jose.SignJWT({ userId: user.id })
+            .setProtectedHeader({ alg: "HS256" })
+            .setExpirationTime('15d')
+            .sign(secret);
+
         await redis.setEx(`session:${user.id}`, 604800, JSON.stringify({ // 7 days
             refresh_token,
             ipAddress: ip,
@@ -199,7 +212,7 @@ export async function POST(request: NextRequest) {
         return response;
 
     } catch (error) {
-        console.error("Error in server",error);
+        console.error("Error in server", error);
         return NextResponse.json({ error: "An unexpected error occurred" }, { status: 500 });
     }
 }

@@ -3,10 +3,12 @@ import bcrypt from "bcryptjs";
 import { NextRequest, NextResponse } from "next/server";
 import * as jose from 'jose'
 import * as crypto from 'crypto'
+import { PrismaClient } from "@prisma/client";
 
 if(!redis.isReady){
     await redis.connect();
 }
+const prisma = new PrismaClient()
 export async function POST(request: NextRequest, { params }: { params: { verificationId: string } }) {
     try {
         const { verificationId } = await params;
@@ -44,6 +46,14 @@ export async function POST(request: NextRequest, { params }: { params: { verific
             return NextResponse.json({ error: "Error verification failed" }, { status: 401 })
         }
 
+        await prisma.user.update({
+            where:{id:data.userId},
+            data:{
+                emailVerified:true
+
+            }
+        })
+
         const secret = new TextEncoder().encode(process.env.JWT_SECRET);
         console.log('kuch err 3');
         console.log('THIS IS USERID ',data.userId);
@@ -67,7 +77,7 @@ export async function POST(request: NextRequest, { params }: { params: { verific
             lastAccessed: Date.now()
         }));
         console.log('kuch err 6');
-        const response = NextResponse.json({ susscess: true });
+        const response = NextResponse.json({ susscess: true },{status:200});
         response.cookies.set('access_token', access_token, {
             httpOnly: true,
             secure: process.env.NODE_ENV === 'production',
@@ -75,7 +85,7 @@ export async function POST(request: NextRequest, { params }: { params: { verific
             sameSite: 'strict'
         })
         console.log('kuch err 7');
-        response.cookies.set('refresh_token', refresh_token, {
+        response.cookies.set('refresh_token', refresh_token_hash, {
             httpOnly: true,
             secure: process.env.NODE_ENV === 'production',
             maxAge: 15 * 24 * 60 * 60,

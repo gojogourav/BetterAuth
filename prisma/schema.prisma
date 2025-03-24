@@ -19,10 +19,10 @@ model User {
   passwordHash  String
   email         String  @unique
   emailVerified Boolean @default(false)
-  name String?
+  name          String?
 
-  failedAttempts           Int            @default(0)
-  lockedUntil              DateTime?
+  failedAttempts Int       @default(0)
+  lockedUntil    DateTime?
 
   //2factor auth add krunga badme
 
@@ -37,8 +37,6 @@ model User {
 
   //iske bad chatting feature dalenga
 }
-
-
 
 model UploadedReel {
   user        User       @relation(fields: [userId], references: [id])
