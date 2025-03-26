@@ -18,6 +18,8 @@ export const metadata: Metadata = {
 };
 
 import { BackgroundGradientAnimation } from "@/components/ui/background-gradient-animation";
+import BottomBar from "@/components/fixed-components/BottomBar";
+import TopBar from "@/components/fixed-components/TopBar";
 
 
 export default function RootLayout({
@@ -29,8 +31,14 @@ export default function RootLayout({
     <html lang="en">
       <body
         className={`${geistSans.variable} ${geistMono.variable} antialiased`}
+        
       >
+        <div className="overflow-y-auto" >
+
+        <TopBar/>
         {children}
+        </div>
+        <BottomBar/>
       </body>
     </html>
   );

@@ -55,6 +55,8 @@ export async function POST(request: NextRequest, { params }: { params: { verific
         })
 
         const secret = new TextEncoder().encode(process.env.JWT_SECRET);
+        if(!secret) console.log('secret hi available nhi h pancho');
+        
         console.log('kuch err 3');
         console.log('THIS IS USERID ',data.userId);
         
@@ -67,12 +69,15 @@ export async function POST(request: NextRequest, { params }: { params: { verific
             .sign(secret);
             console.log('kuch err 4');
 
-        const refresh_token = crypto.randomBytes(64).toString('hex')
-        const refresh_token_hash = await bcrypt.hash(refresh_token, 12)
+        const refresh_token = await new jose.SignJWT({ userId: data.userId })
+                    .setProtectedHeader({ alg: "HS256" })
+                    .setExpirationTime('15d')
+                    .sign(secret);
+        
         console.log('kuch err 5');
 
         await redis.setEx(`session:${data.userId}`, 604800, JSON.stringify({ // 7 days
-            refresh_token_hash,
+            refresh_token,
             ipAddress: ip,
             lastAccessed: Date.now()
         }));
@@ -85,7 +90,7 @@ export async function POST(request: NextRequest, { params }: { params: { verific
             sameSite: 'strict'
         })
         console.log('kuch err 7');
-        response.cookies.set('refresh_token', refresh_token_hash, {
+        response.cookies.set('refresh_token', refresh_token, {
             httpOnly: true,
             secure: process.env.NODE_ENV === 'production',
             maxAge: 15 * 24 * 60 * 60,

@@ -1,4 +1,5 @@
 "use client"
+import image from '@/public/image.png'
 
 import React from 'react'
 import { zodResolver } from "@hookform/resolvers/zod"
@@ -61,10 +62,10 @@ function Login() {
     }
     
     return (
-        <div className=' items-center flex justify-center h-screen w-full'>
+        <div className=' p-5 border  items-center flex justify-center h-screen w-full'>
             <Form {...form}>
-                <form onSubmit={form.handleSubmit(onSubmit)} className="space-y-8 ">
-           <Image className='select-none justify-self-center flex content-center' src={'https://img.icons8.com/?size=512&id=eAMGjpJ4skFB&format=png'} height={100} width={100} alt='icon'/>
+                <form onSubmit={form.handleSubmit(onSubmit)} className="space-y-8 border-black border-2\">
+           <Image className='select-none justify-self-center flex content-center' src={image} height={100} width={100} alt='icon'/>
             <h1 className='text-3xl font-semibold font-sans'>Login in to Reels</h1>
                     <FormField
                     

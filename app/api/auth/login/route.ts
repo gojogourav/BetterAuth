@@ -185,7 +185,7 @@ export async function POST(request: NextRequest) {
             .setExpirationTime('15d')
             .sign(secret);
 
-        await redis.setEx(`session:${user.id}`, 604800, JSON.stringify({ // 7 days
+        await redis.setEx(`session:${user.id}`, 1296000, JSON.stringify({ // 7 days
             refresh_token,
             ipAddress: ip,
             lastAccessed: Date.now()
