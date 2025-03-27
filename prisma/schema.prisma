@@ -36,6 +36,7 @@ model User {
   following     User[]         @relation("userFollows")
 
   //iske bad chatting feature dalenga
+  Likes Likes[]
 }
 
 model UploadedReel {
@@ -45,10 +46,19 @@ model UploadedReel {
   reelUrl     String
   description String
   title       String
+  like        Likes[]
   tags        User[]     @relation("Tagged")
   comments    Comments[]
 
   createdAt DateTime @default(now())
+}
+
+model Likes {
+  id           String       @id @default(uuid())
+  parentReel   UploadedReel @relation(fields: [parentReelId], references: [id])
+  parentReelId String
+  user         User         @relation(fields: [userId], references: [id])
+  userId       String
 }
 
 model Comments {
